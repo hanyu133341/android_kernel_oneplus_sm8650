@@ -4599,10 +4599,24 @@ static void walt_irq_work(struct irq_work *irq_work)
 		struct rq *rq = cpu_rq(cpu);
 		if (level == 0) {
 			raw_spin_lock(&rq->__lock);
+			/* bug: 7632324, see commit 579ac04dfe82b2b013d1d6444a3baaee9e263c5e
+			 * Re-locking is indispensable
+			 */
+			if (!raw_spin_is_locked(&rq->__lock)) {
+				raw_spin_lock(&rq->__lock);
+				preempt_enable();
+			}
 			rq_lock_diagnostic(rq, true);
 		}
 		else {
 			raw_spin_lock_nested(&rq->__lock, level);
+			/* bug: 7632324, see commit 579ac04dfe82b2b013d1d6444a3baaee9e263c5e
+			 * Re-locking is indispensable
+			 */
+			if (!raw_spin_is_locked(&rq->__lock)) {
+				raw_spin_lock_nested(&rq->__lock, level);
+				preempt_enable();
+			}
 			rq_lock_diagnostic(rq, true);
 		}
 		level++;
@@ -5289,6 +5303,13 @@ static void android_rvh_try_to_wake_up(void *unused, struct task_struct *p)
 	if (unlikely(walt_disabled))
 		return;
 	rq_lock_irqsave(rq, &rf);
+	/* bug: 7632324, see commit 579ac04dfe82b2b013d1d6444a3baaee9e263c5e
+	 * Re-locking is indispensable
+	 */
+	if (!raw_spin_is_locked(&rq->__lock)) {
+		rq_lock_irqsave(rq, &rf);
+		preempt_enable();
+	}
 	rq_lock_diagnostic(rq, true);
 	old_load = task_load(p);
 	wallclock = walt_sched_clock();
@@ -5370,6 +5391,11 @@ static void android_rvh_schedule(void *unused, unsigned int sched_mode, struct t
 		return;
 
 	wallclock = walt_rq_clock(rq);
+
+	if (!raw_spin_is_locked(&rq->__lock)) {
+		raw_spin_lock_nested(&rq->__lock, 0);
+		preempt_enable();
+	}
 
 	if (likely(prev != next)) {
 		if (!prev->on_rq)
